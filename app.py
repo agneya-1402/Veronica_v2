@@ -47,7 +47,7 @@ KNOWN_DIR = BASE_DIR / "known_faces"
 KNOWN_DIR.mkdir(exist_ok=True)
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 6 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 
 COHERE_API_KEY = os.getenv("COHERE_API_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
@@ -222,6 +222,21 @@ def expand_box(box, frame_shape, px=0.18, py=0.22):
     x1 = min(w, x + bw + dx)
     y1 = min(h, y + bh + dy)
     return x0, y0, x1, y1
+
+
+def safe_filename_name(name: str) -> str:
+    name = re.sub(r"[^A-Za-z0-9 _-]+", "", (name or "").strip())
+    name = re.sub(r"\s+", " ", name).strip(" .")
+    return name[:80]
+
+
+def image_mime(filename: str) -> str:
+    ext = Path(filename).suffix.lower()
+    return {
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".png": "image/png", ".webp": "image/webp",
+        ".gif": "image/gif", ".bmp": "image/bmp",
+    }.get(ext, "application/octet-stream")
 
 
 # ---------------------------------------------------------------------------
@@ -932,12 +947,12 @@ def gemini_text_with_search(prompt):
     return (response.text or "").strip(), extract_grounding_sources(response)
 
 
-def gemini_image_with_optional_search(data, prompt, web=False):
+def gemini_image_with_optional_search(data, prompt, web=False, mime_type="image/jpeg"):
     config = gemini_search_config() if web else None
     response = gemini_client.models.generate_content(
         model=GEMINI_MODEL,
         contents=[
-            types.Part.from_bytes(data=data, mime_type="image/jpeg"),
+            types.Part.from_bytes(data=data, mime_type=mime_type),
             prompt,
         ],
         config=config,
@@ -1267,6 +1282,131 @@ def scene():
     except Exception as exc:
         print(f"[Veronica] Scene analysis error: {type(exc).__name__}: {exc}")
         return jsonify({"error": str(exc)}), 502
+
+
+# ---------------------------------------------------------------------------
+# File analysis + face enrollment
+# ---------------------------------------------------------------------------
+
+@app.post("/api/analyze-upload")
+def analyze_upload():
+    """Analyze a user-selected file with Gemini.
+
+    Images are sent directly to Gemini vision. Text-like files are read locally
+    and summarized/analyzed by Gemini. PDF support uses PyMuPDF when installed.
+    """
+    if not gemini_client:
+        return jsonify({"error": "GEMINI_API_KEY is not configured."}), 503
+
+    uploaded = request.files.get("file")
+    if not uploaded or not uploaded.filename:
+        return jsonify({"error": "file is required"}), 400
+
+    filename = uploaded.filename
+    data = uploaded.read()
+    if not data:
+        return jsonify({"error": "empty file"}), 400
+
+    mime = (uploaded.mimetype or image_mime(filename)).lower()
+    ext = Path(filename).suffix.lower()
+
+    try:
+        image_exts = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
+        if ext in image_exts or mime.startswith("image/"):
+            prompt = (
+                "Analyze this uploaded image carefully. Explain what is visible, "
+                "important objects, readable text, layout, and anything the user "
+                "would reasonably want to know. Do not invent details. Keep it concise."
+            )
+            reply, sources = gemini_image_with_optional_search(
+                data, prompt, web=False, mime_type=mime if mime.startswith("image/") else image_mime(filename)
+            )
+            return jsonify({"reply": reply or "I couldn't confidently analyze that image.", "filename": filename, "sources": sources, "type": "image"})
+
+        text = None
+        if ext in {".txt", ".md", ".csv", ".json", ".py", ".js", ".html", ".css", ".log", ".xml", ".yaml", ".yml"} or mime.startswith("text/") or mime in {"application/json", "application/javascript"}:
+            text = data.decode("utf-8", errors="replace")
+        elif ext == ".pdf" or mime == "application/pdf":
+            try:
+                import fitz  # PyMuPDF
+                doc = fitz.open(stream=data, filetype="pdf")
+                pages = [page.get_text("text") for page in doc]
+                text = "\\n\\n".join(pages)
+            except Exception as exc:
+                return jsonify({"error": "PDF analysis needs PyMuPDF. Install it with: pip install pymupdf"}), 415
+
+        if text is not None:
+            if len(text) > 120000:
+                text = text[:120000] + "\\n[truncated]"
+            prompt = (
+                "Analyze the following uploaded file. Give the user a useful, direct summary "
+                "and answer what can be inferred from the content. Preserve important numbers, "
+                "names, headings, code details, and warnings. Do not invent missing information.\n\n"
+                f"FILE: {filename}\n\n{text}"
+            )
+            response = gemini_client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+            return jsonify({"reply": (response.text or "No useful analysis returned.").strip(), "filename": filename, "sources": [], "type": "document"})
+
+        return jsonify({"error": f"Unsupported file type: {filename}"}), 415
+    except Exception as exc:
+        print(f"[Veronica] Upload analysis error: {type(exc).__name__}: {exc}")
+        return jsonify({"error": str(exc)}), 502
+
+
+@app.post("/api/face/capture")
+def capture_face():
+    """Enroll the largest visible face from a fresh camera frame."""
+    uploaded = request.files.get("frame")
+    name = safe_filename_name(request.form.get("name", ""))
+    if not uploaded:
+        return jsonify({"error": "frame is required"}), 400
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+
+    data = uploaded.read()
+    image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        return jsonify({"error": "invalid camera frame"}), 400
+
+    try:
+        faces = detect_faces(image)
+        if not faces:
+            return jsonify({"error": "No face detected. Face the camera and try again."}), 422
+
+        face = faces[0]
+        x0, y0, x1, y1 = expand_box(face["box"], image.shape, 0.22, 0.28)
+        crop = image[y0:y1, x0:x1]
+        if crop.size == 0:
+            return jsonify({"error": "Could not crop the detected face."}), 422
+
+        # Keep one clean image per identity. If the name already exists, overwrite
+        # the previous capture so the user can update the reference image.
+        target = KNOWN_DIR / f"{name}.jpg"
+        ok, encoded = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+        if not ok:
+            return jsonify({"error": "Could not encode captured face."}), 500
+        target.write_bytes(encoded.tobytes())
+
+        embedding = extract_sface_embedding(crop)
+        if embedding is None:
+            target.unlink(missing_ok=True)
+            return jsonify({"error": "Face was detected but SFace could not create an embedding."}), 422
+
+        with known_lock:
+            known_faces[:] = [item for item in known_faces if item["name"].lower() != name.lower()]
+            known_faces.append({"name": name, "embedding": embedding})
+
+        print(f"[Veronica] Face enrolled: {name} -> {target.name}")
+        return jsonify({
+            "ok": True,
+            "name": name,
+            "filename": target.name,
+            "score": round(float(face["score"]), 3),
+            "known_faces": len(known_faces),
+        })
+    except Exception as exc:
+        print(f"[Veronica] Face capture error: {type(exc).__name__}: {exc}")
+        return jsonify({"error": str(exc)}), 500
 
 
 # ---------------------------------------------------------------------------

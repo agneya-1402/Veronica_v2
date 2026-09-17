@@ -1373,6 +1373,8 @@ def capture_face():
         if not faces:
             return jsonify({"error": "No face detected. Face the camera and try again."}), 422
 
+        # detect_faces() sorts by area, so the first face is the largest visible face.
+        # This makes Capture Face predictable when more than one person is in frame.
         face = faces[0]
         x0, y0, x1, y1 = expand_box(face["box"], image.shape, 0.22, 0.28)
         crop = image[y0:y1, x0:x1]

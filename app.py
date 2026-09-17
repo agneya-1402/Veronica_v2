@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 import torch
 from dotenv import load_dotenv
-from flask import Flask, Response, jsonify, render_template, request, stream_with_context
+from flask import Flask, Response, jsonify, render_template, request, stream_with_context, send_file
 
 load_dotenv()
 
@@ -966,7 +966,18 @@ def gemini_image_with_optional_search(data, prompt, web=False, mime_type="image/
 
 @app.get("/")
 def index():
+    # Veronica's frontend is intentionally kept beside app.py so the two
+    # replacement files are always connected when the user runs app.py.
+    # Fall back to Flask's templates directory only if a project still uses it.
+    root_index = BASE_DIR / "index.html"
+    if root_index.exists():
+        return send_file(root_index, mimetype="text/html")
     return render_template("index.html")
+
+
+@app.get("/api/health")
+def health():
+    return jsonify({"ok": True, "service": "Veronica", "frontend": (BASE_DIR / "index.html").exists()})
 
 
 @app.get("/api/status")
@@ -1435,6 +1446,7 @@ def startup():
 
     print("")
     print("==============================================")
+    print(f" Frontend              : {BASE_DIR / 'index.html'}")
     print(" Veronica")
     print("==============================================")
     print(" Latest-frame mailbox : ENABLED")

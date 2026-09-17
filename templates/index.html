@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VERONICA // AI ROBOT</title>
+<style>
+:root{--bg:#05070a;--panel:#0b1016;--panel2:#0d141c;--line:#1b2a36;--cyan:#69e6ff;--cyan2:#2ab7dc;--green:#b2ff00;--purple:#a982ff;--text:#edf6fa;--muted:#748692;--danger:#ff557a}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Display",system-ui,sans-serif}
+body{background:radial-gradient(ellipse at 50% 35%,#111b25 0,#080c11 42%,#030506 100%)}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.08;background-image:linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);background-size:44px 44px}
+.app{height:100vh;display:grid;grid-template-columns:minmax(0,1fr) 330px;grid-template-rows:66px minmax(0,1fr) 82px}
+.top{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;padding:0 28px;border-bottom:1px solid var(--line);background:rgba(3,6,9,.82);backdrop-filter:blur(20px);z-index:5}.brand{display:flex;align-items:center;gap:12px;font-size:15px;font-weight:800;letter-spacing:.26em}.brand-dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 18px rgba(178,255,0,.8)}.top-right{display:flex;align-items:center;gap:16px}.status{font:10px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.12em;color:var(--muted)}.status b{color:var(--green)}
+.stage{position:relative;min-width:0;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:12px 24px 20px}.robot{position:relative;width:min(64vh,650px);height:min(64vh,650px);flex:none;filter:drop-shadow(0 35px 75px rgba(0,0,0,.7))}.head{position:absolute;inset:4%;border:1px solid #2c3c4b;border-radius:31% 31% 39% 39%;background:linear-gradient(145deg,#17202a 0,#0a0e13 55%,#111820 100%);box-shadow:inset 0 0 90px rgba(105,230,255,.045),0 0 0 1px #030507,0 0 55px rgba(105,230,255,.08)}
+.head:before{content:"";position:absolute;inset:7%;border:1px solid rgba(105,230,255,.07);border-radius:28% 28% 35% 35%;pointer-events:none}.ear{position:absolute;top:35%;width:7%;height:22%;border:1px solid #344857;background:#0c131a;border-radius:18px}.ear.l{left:-4.5%}.ear.r{right:-4.5%}.ear:after{content:"";position:absolute;left:50%;top:16%;width:3px;height:68%;transform:translateX(-50%);background:var(--cyan);box-shadow:0 0 12px var(--cyan);opacity:.55}
+.brow{position:absolute;top:27%;height:3px;width:24%;border-radius:3px;background:#405361;opacity:.65}.brow.left{left:18%;transform:rotate(7deg)}.brow.right{right:18%;transform:rotate(-7deg)}
+.eye-wrap{position:absolute;top:31%;width:27%;height:17%;background:#020406;border:1px solid #2a3b49;border-radius:48%;overflow:hidden;box-shadow:inset 0 0 24px #000,0 0 20px rgba(105,230,255,.05)}.eye-wrap.left{left:17%}.eye-wrap.right{right:17%}.eye{position:absolute;left:50%;top:50%;width:42%;height:64%;transform:translate(-50%,-50%);border-radius:50%;background:radial-gradient(circle at 37% 31%,#f1ffff 0 7%,#8ef1ff 8% 23%,#21a7c8 43%,#06151d 76%);box-shadow:0 0 18px rgba(105,230,255,.85),0 0 38px rgba(105,230,255,.32);will-change:transform;transition:transform .10s cubic-bezier(.2,.8,.2,1)}.eye:after{content:"";position:absolute;inset:27%;border-radius:50%;background:#010305;box-shadow:0 0 7px #000}
+.mouth{position:absolute;left:23%;right:23%;top:59%;height:17%;border:1px solid #334654;border-radius:16px;background:#020406;box-shadow:inset 0 0 35px rgba(105,230,255,.035);display:flex;align-items:center;justify-content:center}.mouth-inner{position:relative;width:67%;height:8px;border-radius:999px;background:#55dfff;box-shadow:0 0 14px rgba(105,230,255,.75);transition:height .08s ease,width .08s ease}.talking .mouth-inner{animation:talk .15s ease-in-out infinite alternate}@keyframes talk{0%{height:5px;width:55%}50%{height:20px;width:74%}100%{height:9px;width:63%}}
+.chin{position:absolute;left:35%;right:35%;bottom:9%;height:3px;background:#263845;box-shadow:0 0 15px rgba(105,230,255,.3)}.halo{position:absolute;inset:-2%;border:1px solid rgba(105,230,255,.05);border-radius:34%;transform:scale(1.05);pointer-events:none}
+.gaze-dot{position:absolute;width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 16px var(--green);opacity:0;transform:translate(-50%,-50%);transition:opacity .2s}.gaze-dot.on{opacity:.7}
+.reply{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);width:min(760px,calc(100% - 80px));padding:11px 15px;border:1px solid rgba(105,230,255,.12);border-radius:13px;background:rgba(8,13,18,.78);backdrop-filter:blur(15px);color:#aebdc6;font-size:12px;line-height:1.45;box-shadow:0 12px 35px rgba(0,0,0,.22);min-height:42px;max-height:74px;overflow:auto}.reply strong{color:#eaf7fb;font-weight:650}.reply.empty{color:#52636e}
+.side{grid-row:2/4;border-left:1px solid var(--line);background:rgba(5,8,12,.88);backdrop-filter:blur(20px);padding:18px;display:flex;flex-direction:column;gap:12px;overflow:auto}.section{border:1px solid var(--line);border-radius:14px;background:rgba(11,16,22,.72);padding:14px}.label{font:9px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.18em;color:#657884;margin-bottom:9px}.identity{font-size:19px;font-weight:750;letter-spacing:-.02em}.pill{display:inline-flex;margin-top:8px;padding:4px 8px;border-radius:999px;border:1px solid #293b48;color:#657783;font:9px ui-monospace,monospace;letter-spacing:.08em}.pill.on{color:var(--green);border-color:rgba(178,255,0,.3);background:rgba(178,255,0,.04)}.objects{display:flex;flex-wrap:wrap;gap:5px;max-height:130px;overflow:auto}.obj{padding:6px 8px;border:1px solid #263744;border-radius:7px;background:#0e161d;color:#c4d2d9;font:10px ui-monospace,SFMono-Regular,monospace}.scene{font-size:11px;line-height:1.5;color:#8fa1ac;max-height:150px;overflow:auto}.analyze{width:100%;height:36px;margin-top:9px;border:1px solid #29404f;border-radius:10px;background:#0e171e;color:#d8e6eb;font-weight:700;cursor:pointer}.analyze:hover{border-color:#4d7182;background:#13202a}
+.chat{grid-column:1;display:flex;align-items:center;gap:9px;padding:12px 26px;background:linear-gradient(transparent,rgba(2,4,7,.96));z-index:4}.chat input{height:48px;min-width:0;flex:1;border:1px solid #263844;border-radius:12px;background:#0a1016;color:var(--text);padding:0 15px;outline:none;font-size:13px}.chat input:focus{border-color:#466878;box-shadow:0 0 0 3px rgba(105,230,255,.05)}button{font-family:inherit}.chat button{height:48px;border:1px solid #2b404e;border-radius:12px;background:#0d151c;color:#d8e6eb;padding:0 16px;font-weight:750;cursor:pointer}.chat button:hover{background:#14202a;border-color:#4a6878}.mic{width:48px;padding:0!important;font-size:16px}.mic.active{color:var(--green);border-color:rgba(178,255,0,.5);box-shadow:0 0 20px rgba(178,255,0,.08)}.web.active{color:#d8c8ff;border-color:rgba(169,130,255,.55);background:rgba(169,130,255,.08)}
+@media(max-width:900px){html,body{overflow:auto}.app{height:auto;min-height:100vh;grid-template-columns:1fr;grid-template-rows:62px 66vh auto 78px}.side{grid-row:auto;border-left:0;border-top:1px solid var(--line)}.chat{grid-column:1}.robot{width:min(78vw,520px);height:min(78vw,520px)}.reply{bottom:12px;width:calc(100% - 30px)}.top{padding:0 18px}}
+</style>
+</head>
+<body>
+<div class="app">
+<header class="top"><div class="brand"><span class="brand-dot"></span>VERONICA</div><div class="top-right"><div class="status">VISION <b id="visionStatus">STARTING</b></div><div class="status">3 FPS</div></div></header>
+<main class="stage" id="stage">
+  <div class="robot" id="robot">
+    <div class="halo"></div>
+    <div class="head">
+      <div class="ear l"></div><div class="ear r"></div>
+      <div class="brow left"></div><div class="brow right"></div>
+      <div class="eye-wrap left"><div class="eye" id="eyeL"></div></div>
+      <div class="eye-wrap right"><div class="eye" id="eyeR"></div></div>
+      <div class="mouth" id="mouth"><div class="mouth-inner"></div></div>
+      <div class="chin"></div>
+    </div>
+  </div>
+  <div class="gaze-dot" id="gazeDot"></div>
+  <div class="reply empty" id="reply">Veronica is ready.</div>
+</main>
+<aside class="side">
+  <div class="section"><div class="label">IDENTITY TRACK</div><div class="identity" id="identity">Looking for you…</div><div class="pill" id="trackPill">SEARCHING</div></div>
+  <div class="section"><div class="label">OBJECTS</div><div class="objects" id="objects"><span class="obj">scanning…</span></div></div>
+  <div class="section"><div class="label">ENVIRONMENT</div><div class="scene" id="scene">Local object detection is active. Ask Veronica to analyze the current camera view for a richer description.</div><button class="analyze" id="analyze">ANALYZE SCENE</button></div>
+</aside>
+<div class="chat"><button class="mic" id="mic" title="Speak">◉</button><input id="input" autocomplete="off" placeholder="Talk to Veronica…"><button class="web" id="web">WEB</button><button id="send">SEND</button></div>
+</div>
+<video id="camera" autoplay playsinline muted style="display:none"></video><canvas id="canvas" style="display:none"></canvas>
+<script>
+const $=id=>document.getElementById(id);
+const video=$('camera'), canvas=$('canvas'), ctx=canvas.getContext('2d');
+const eyeL=$('eyeL'), eyeR=$('eyeR'), robot=$('robot'), mouth=$('mouth');
+let stream=null,lastFrameBlob=null,visionBusy=false,useWeb=false,history=[];
+let targetGaze={x:0,y:0},currentGaze={x:0,y:0};
+
+function setReply(text,empty=false){$('reply').textContent=text||'';$('reply').classList.toggle('empty',empty);}
+
+function updateGaze(face){
+  if(!face){targetGaze={x:0,y:0};$('gazeDot').classList.remove('on');return;}
+  const nx=Math.max(0,Math.min(1,Number(face.nx ?? face.cx/640)));
+  const ny=Math.max(0,Math.min(1,Number(face.ny ?? face.cy/480)));
+  // The eyes move only inside their sockets. Horizontal is slightly stronger than vertical.
+  targetGaze.x=(nx-.5)*13;
+  targetGaze.y=(ny-.5)*9;
+  $('gazeDot').classList.add('on');
+}
+
+function animateEyes(){
+  currentGaze.x+=(targetGaze.x-currentGaze.x)*.22;
+  currentGaze.y+=(targetGaze.y-currentGaze.y)*.22;
+  const tx=currentGaze.x,ty=currentGaze.y;
+  eyeL.style.transform=`translate(calc(-50% + ${tx}px),calc(-50% + ${ty}px))`;
+  eyeR.style.transform=`translate(calc(-50% + ${tx}px),calc(-50% + ${ty}px))`;
+  requestAnimationFrame(animateEyes);
+}
+animateEyes();
+
+async function startCamera(){
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},facingMode:'user'},audio:false});
+    video.srcObject=stream;
+    await video.play();
+    $('visionStatus').textContent='ONLINE';
+    visionLoop();
+  }catch(e){
+    $('visionStatus').textContent='CAM DENIED';
+    setReply('Camera access is required for Veronica’s eyes and identity tracking.');
+  }
+}
+
+async function capture(){
+  if(!video.videoWidth)return null;
+  canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  return await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',.64));
+}
+
+async function visionLoop(){
+  if(!visionBusy){
+    visionBusy=true;
+    try{
+      const blob=await capture();
+      if(blob){
+        lastFrameBlob=blob;
+        const fd=new FormData();fd.append('frame',blob,'frame.jpg');
+        const r=await fetch('/api/frame',{method:'POST',body:fd});
+        if(r.ok){
+          const d=await r.json();
+          updateGaze(d.face);
+          $('identity').textContent=d.name||'Unknown';
+          $('trackPill').textContent=d.tracking?'TRACKING':'SEARCHING';
+          $('trackPill').classList.toggle('on',!!d.tracking);
+          const items=(d.objects||[]).slice(0,16);
+          $('objects').innerHTML=items.length?items.map(o=>`<span class="obj">${escapeHtml(o.label)} ${Math.round(o.confidence*100)}%</span>`).join(''):'<span class="obj">none</span>';
+        }
+      }
+    }catch(e){}
+    finally{visionBusy=false;}
+  }
+  setTimeout(visionLoop,333);
+}
+
+function speak(text){
+  if(!('speechSynthesis' in window))return;
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text);
+  u.rate=.98;u.pitch=1.02;u.volume=1;
+  u.onstart=()=>mouth.classList.add('talking');
+  u.onend=()=>mouth.classList.remove('talking');
+  u.onerror=()=>mouth.classList.remove('talking');
+  speechSynthesis.speak(u);
+}
+
+async function send(){
+  const input=$('input');const msg=input.value.trim();if(!msg)return;
+  input.value='';setReply('Thinking…');
+  try{
+    const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg,history,web:useWeb})});
+    const d=await r.json();if(!r.ok)throw new Error(d.error||'Request failed');
+    const reply=String(d.reply||'');
+    history.push({role:'user',content:msg},{role:'assistant',content:reply});
+    setReply(reply);speak(reply);
+  }catch(e){setReply(e.message);}
+}
+
+function escapeHtml(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+
+$('send').onclick=send;$('input').onkeydown=e=>{if(e.key==='Enter')send()};
+$('web').onclick=()=>{useWeb=!useWeb;$('web').classList.toggle('active',useWeb);$('web').textContent=useWeb?'WEB ON':'WEB'};
+$('analyze').onclick=async()=>{
+  if(!lastFrameBlob){setReply('Camera frame is not ready yet.');return;}
+  setReply('Analyzing the current camera view…');
+  try{
+    const fd=new FormData();fd.append('frame',lastFrameBlob,'frame.jpg');
+    const r=await fetch('/api/scene',{method:'POST',body:fd});const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Scene analysis failed');
+    $('scene').textContent=d.scene;setReply(d.scene);speak(d.scene);
+  }catch(e){setReply(e.message);}
+};
+
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+if(SR){
+  const rec=new SR();rec.lang='en-IN';rec.interimResults=false;rec.continuous=false;
+  rec.onstart=()=>$('mic').classList.add('active');rec.onend=()=>$('mic').classList.remove('active');rec.onerror=()=> $('mic').classList.remove('active');
+  rec.onresult=e=>{$('input').value=e.results[0][0].transcript;send()};
+  $('mic').onclick=()=>{try{rec.start()}catch(e){}};
+}else{$('mic').disabled=true;}
+startCamera();
+</script>
+</body>
+</html>

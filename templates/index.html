@@ -115,7 +115,8 @@ button:disabled{opacity:.38;cursor:not-allowed}
 @keyframes scan{0%{top:15%;opacity:0}15%{opacity:.25}85%{opacity:.25}100%{top:74%;opacity:0}}
 
 .eye-direction,.eye-expression{
-  position:absolute;left:29.8%;top:45.0%;width:40.4%;height:6.6%;
+  /* Calibrated to the 1145 × 1374 blank-face source image. */
+  position:absolute;left:30.2%;top:45.6%;width:39.6%;height:7.2%;
   z-index:6;background-repeat:no-repeat;background-size:100% 100%;background-position:center;
   pointer-events:none;opacity:0;transition:opacity .07s linear;
 }
@@ -123,13 +124,13 @@ button:disabled{opacity:.38;cursor:not-allowed}
 .eye-expression{z-index:7}
 .eye-expression.on{opacity:1}
 .mouth-expression{
-  position:absolute;left:32.0%;top:60.8%;width:36.0%;height:14.4%;
+  position:absolute;left:35.2%;top:65.5%;width:29.6%;height:8.3%;
   z-index:7;background-repeat:no-repeat;background-size:100% 100%;background-position:center;
   pointer-events:none;opacity:0;transition:opacity .045s linear;
 }
 .mouth-expression.on{opacity:1}
 .mouth-glow{
-  position:absolute;left:34%;top:61%;width:32%;height:13%;z-index:5;pointer-events:none;
+  position:absolute;left:36%;top:65.7%;width:28%;height:8%;z-index:5;pointer-events:none;
   border-radius:50%;background:radial-gradient(ellipse,rgba(82,67,255,.38),transparent 68%);
   filter:blur(10px);opacity:0;transition:.15s
 }
@@ -758,6 +759,8 @@ setupRecognition();startCamera();pickFemaleVoice();setMouthFrame(0);
 </script>
 <script>
 (() => {
+  const baseFace = document.querySelector('.avatar-base');
+  if (baseFace) baseFace.src = '/static/veronica-blank-face.png';
   const runtime = document.getElementById('veronicaRuntime').textContent
     .replace('="];base64,', '=","data:image/png;base64,');
   try {

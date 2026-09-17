@@ -93,19 +93,41 @@ function showLoader(label){$('response').innerHTML=`<span class="loader">${escap
 function setStreaming(on){$('response').classList.toggle('streaming',on)}
 function setActionBusy(busy,label='STOP'){const b=$('action');b.textContent=busy?label:'SEND';b.classList.toggle('stop',busy)}
 
+function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
 function updateGaze(face){
   if(!face){targetGaze={x:0,y:0};$('gazeDot').classList.remove('on');return}
-  const nx=Math.max(0,Math.min(1,Number(face.nx??.5)));
-  const ny=Math.max(0,Math.min(1,Number(face.ny??.5)));
-  targetGaze.x=(nx-.5)*15;targetGaze.y=(ny-.5)*10;
+  const nx=clamp(Number(face.nx??.5),0,1);
+  const ny=clamp(Number(face.ny??.5),0,1);
+  // The browser camera is conceptually mirrored for the user. The backend sees
+  // the raw camera image, so invert X here to make the robot follow the person
+  // in the same direction they see themselves moving.
+  const sx=1-nx;
+  const dx=(sx-.5)*2;
+  const dy=(ny-.5)*2;
+
+  // Non-linear response keeps movement obvious when the person is far away,
+  // while hard caps prevent either pupil from leaving its eye socket.
+  const gainX=Math.max(0.92,1.15 + Math.min(0.55,Number(face.w||80)/260));
+  const gainY=Math.max(0.92,1.15 + Math.min(0.40,Number(face.h||80)/320));
+  targetGaze.x=clamp(Math.tanh(dx*gainX*1.65),-1,1);
+  targetGaze.y=clamp(Math.tanh(dy*gainY*1.55),-1,1);
   $('gazeDot').classList.add('on');
 }
+function applyEyePosition(el, nx, ny){
+  const wrap=el.parentElement.getBoundingClientRect();
+  // Pupil is ~45% of eye width and ~58% of eye height. These caps keep the
+  // visible pupil completely inside the socket even on different screen sizes.
+  const maxX=Math.max(5,wrap.width*0.255);
+  const maxY=Math.max(4,wrap.height*0.20);
+  const x=nx*maxX;
+  const y=ny*maxY;
+  el.style.transform=`translate3d(calc(-50% + ${x}px),calc(-50% + ${y}px),0)`;
+}
 function animateEyes(){
-  currentGaze.x+=(targetGaze.x-currentGaze.x)*.20;
-  currentGaze.y+=(targetGaze.y-currentGaze.y)*.20;
-  const x=currentGaze.x,y=currentGaze.y;
-  eyeL.style.transform=`translate(calc(-50% + ${x}px),calc(-50% + ${y}px))`;
-  eyeR.style.transform=`translate(calc(-50% + ${x}px),calc(-50% + ${y}px))`;
+  currentGaze.x+=(targetGaze.x-currentGaze.x)*.16;
+  currentGaze.y+=(targetGaze.y-currentGaze.y)*.16;
+  applyEyePosition(eyeL,currentGaze.x,currentGaze.y);
+  applyEyePosition(eyeR,currentGaze.x,currentGaze.y);
   requestAnimationFrame(animateEyes);
 }
 animateEyes();
@@ -122,7 +144,12 @@ function speak(text,onDone){
 
 function stopEverything(){
   if(activeController){activeController.abort();activeController=null}
-  speechSynthesis?.cancel();mouth.classList.remove('talking');setActionBusy(false);setStreaming(false);activeKind=null;
+  speechSynthesis?.cancel();
+  mouth.classList.remove('talking');
+  setActionBusy(false);setStreaming(false);
+  activeKind=null;
+  $('analyze').classList.remove('busy');
+  $('analyze').textContent='ANALYZE CURRENT FRAME';
 }
 
 async function captureFreshFrame(){
@@ -163,29 +190,73 @@ function greetIfNeeded(name){
   const greeting=`Hi ${name}, good to see you.`;setResponse(greeting);speak(greeting);
 }
 
+function isVisualQuestion(text){
+  const t=(text||'').toLowerCase().trim();
+  const patterns=[
+    'what am i holding','what am i carrying','what is in my hand',
+    "what's in my hand",'what am i wearing','what do you see',
+    'what is happening',"what's happening",'what is going on',"what's going on",
+    'describe what you see','look at this','can you see','what is this',"what's this",
+    'what object','where am i','who is in front of you','what is behind me',
+    "what's behind me",'is there a','do you see a','how many people','how many ',
+    'what color is','what colour is','read this','read the text','can you read',
+    'am i wearing','is there anything'
+  ];
+  return patterns.some(p=>t.includes(p));
+}
+
 async function sendMessage(msg){
-  msg=(msg||'').trim();if(!msg||activeController)return;
-  $('input').value='';showLoader(useWeb?'Searching the web and thinking':'Thinking');setActionBusy(true);activeKind='chat';setStreaming(true);
+  msg=(msg||'').trim();
+  if(!msg||activeController)return;
+  $('input').value='';
+  const visual=isVisualQuestion(msg);
+  showLoader(visual?'Looking at the current frame':(useWeb?'Searching the web and thinking':'Thinking'));
+  setActionBusy(true);
+  activeKind=visual?'vision':'chat';
+  setStreaming(true);
   activeController=new AbortController();
   try{
-    if(useWeb){
+    if(visual){
+      const blob=await captureFreshFrame();
+      if(!blob)throw new Error('Camera frame is not ready yet.');
+      const fd=new FormData();
+      fd.append('frame',blob,'current-frame.jpg');
+      fd.append('question',msg);
+      const r=await fetch('/api/vision/question',{method:'POST',headers:headers(),body:fd,signal:activeController.signal});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||'Visual analysis failed');
+      setResponse(d.reply||'I could not determine that from the current frame.');
+      speak(d.reply||'I could not determine that from the current frame.');
+    }else if(useWeb){
       const r=await fetch('/api/chat/web',{method:'POST',headers:{'Content-Type':'application/json',...headers()},body:JSON.stringify({message:msg}),signal:activeController.signal});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Request failed');
       setResponse(d.reply||'');speak(d.reply||'');
     }else{
       const r=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json',...headers()},body:JSON.stringify({message:msg}),signal:activeController.signal});
       if(!r.ok){const d=await r.json();throw new Error(d.error||'Request failed')}
-      const reader=r.body.getReader(),decoder=new TextDecoder();let buffer='',reply='';setResponse('');
-      while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const chunks=buffer.split('\n\n');buffer=chunks.pop();
-        for(const chunk of chunks){const line=chunk.split('\n').find(x=>x.startsWith('data: '));if(!line)continue;const d=JSON.parse(line.slice(6));
+      const reader=r.body.getReader(),decoder=new TextDecoder();
+      let buffer='',reply='';
+      setResponse('');
+      while(true){
+        const {value,done}=await reader.read();if(done)break;
+        buffer+=decoder.decode(value,{stream:true});
+        const chunks=buffer.split('\n\n');buffer=chunks.pop();
+        for(const chunk of chunks){
+          const line=chunk.split('\n').find(x=>x.startsWith('data: '));if(!line)continue;
+          const d=JSON.parse(line.slice(6));
           if(d.type==='delta'){reply+=d.text;setResponse(reply)}
           if(d.type==='error')throw new Error(d.error)
         }
       }
       if(reply){setResponse(reply);speak(reply)}
     }
-  }catch(e){if(e.name==='AbortError'){setResponse('Response stopped.');}else{setResponse(e.message)}
-  }finally{activeController=null;activeKind=null;setActionBusy(false);setStreaming(false);if(talkMode&&!speechSynthesis.speaking)startRecognition(true)}
+  }catch(e){
+    if(e.name==='AbortError'){setResponse('Response stopped.')}
+    else{setResponse(e.message||'Something went wrong.')}
+  }finally{
+    activeController=null;activeKind=null;setActionBusy(false);setStreaming(false);
+    if(talkMode&&!speechSynthesis.speaking)startRecognition(true);
+  }
 }
 
 $('action').onclick=()=>{if(activeController||speechSynthesis?.speaking){stopEverything();setResponse('Response stopped.');return}sendMessage($('input').value)};

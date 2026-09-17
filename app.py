@@ -57,8 +57,12 @@ FACE_DETECT_EVERY_N_FRAMES = 2
 YOLO_EVERY_N_FRAMES = 6
 FACE_LOST_TIMEOUT = 2.2
 FACE_MATCH_THRESHOLD = 0.593
-RECOGNIZE_UNKNOWN_EVERY = 2.5
+RECOGNIZE_UNKNOWN_EVERY = 2.0
 MAX_IMAGE_WIDTH = 640
+RECOGNITION_MIN_FACE = 70
+FACE_REACQUIRE_CENTER_JUMP = 0.24
+FACE_REACQUIRE_SIZE_RATIO = 1.45
+VISUAL_CONTEXT_TURNS = 6
 MAX_CONTEXT_MESSAGES = 24  # 12 complete user/assistant turns
 CONVERSATION_TTL = 6 * 60 * 60
 
@@ -88,6 +92,7 @@ yolo_in_progress = False
 track_bbox: Optional[Tuple[int, int, int, int]] = None
 track_points: Optional[np.ndarray] = None
 track_gray: Optional[np.ndarray] = None
+last_published_bbox: Optional[Tuple[int, int, int, int]] = None
 
 FACE_CASCADE = cv2.CascadeClassifier(
     str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml")
@@ -161,7 +166,13 @@ def load_known_faces() -> None:
 
 
 def recognize_face(face_bgr: np.ndarray) -> Tuple[str, float]:
-    """Recognize a live face crop against the startup SFace embedding database."""
+    """Recognize an already-cropped face with SFace.
+
+    The live image has already been located by OpenCV, so DeepFace is told to
+    skip a second detector pass. That avoids the common failure mode where
+    OpenCV finds a face, the crop is sent back through another detector, and
+    that second detector rejects the tight crop.
+    """
     if DeepFace is None or face_bgr is None or face_bgr.size == 0:
         return "Unknown", 1.0
     with known_lock:
@@ -170,10 +181,14 @@ def recognize_face(face_bgr: np.ndarray) -> Tuple[str, float]:
         return "Unknown", 1.0
 
     try:
-        # The live input is already a face crop, but a small border gives OpenCV
-        # enough context to align it consistently with the known-face images.
         h, w = face_bgr.shape[:2]
-        pad_x, pad_y = int(w * 0.16), int(h * 0.16)
+        if h < RECOGNITION_MIN_FACE or w < RECOGNITION_MIN_FACE:
+            return "Unknown", 1.0
+
+        # Give SFace a little context around the detected face while still
+        # avoiding another detector pass.
+        pad_x = int(w * 0.28)
+        pad_y = int(h * 0.32)
         padded = cv2.copyMakeBorder(
             face_bgr, pad_y, pad_y, pad_x, pad_x,
             borderType=cv2.BORDER_REPLICATE,
@@ -181,17 +196,13 @@ def recognize_face(face_bgr: np.ndarray) -> Tuple[str, float]:
         reps = DeepFace.represent(
             img_path=padded,
             model_name="SFace",
-            detector_backend="opencv",
-            enforce_detection=True,
-            align=True,
+            detector_backend="skip",
+            enforce_detection=False,
+            align=False,
         )
         if not reps:
             return "Unknown", 1.0
-        rep = max(
-            reps,
-            key=lambda r: float(r.get("facial_area", {}).get("w", 0)) * float(r.get("facial_area", {}).get("h", 0)),
-        )
-        probe = np.asarray(rep["embedding"], dtype=np.float32)
+        probe = np.asarray(reps[0]["embedding"], dtype=np.float32)
         best_name, best_distance = "Unknown", 1.0
         for item in candidates:
             distance = cosine_distance(probe, item["embedding"])
@@ -201,7 +212,7 @@ def recognize_face(face_bgr: np.ndarray) -> Tuple[str, float]:
             return best_name, best_distance
         return "Unknown", best_distance
     except Exception as exc:
-        print(f"[Veronica] Recognition error: {exc}")
+        print(f"[Veronica] Recognition error: {type(exc).__name__}: {exc}")
         return "Unknown", 1.0
 
 
@@ -271,13 +282,14 @@ def update_klt_tracker(frame: np.ndarray) -> Optional[Tuple[int, int, int, int]]
     if next_points is None or status is None:
         reset_tracker()
         return None
-    good_old = track_points[status.ravel() == 1]
-    good_new = next_points[status.ravel() == 1]
+    good_old = track_points[status.ravel() == 1].reshape(-1, 2)
+    good_new = next_points[status.ravel() == 1].reshape(-1, 2)
     if len(good_new) < 6:
         reset_tracker()
         return None
-    dx = float(np.median(good_new[:, 0] - good_old[:, 0]))
-    dy = float(np.median(good_new[:, 1] - good_old[:, 1]))
+    deltas = good_new - good_old
+    dx = float(np.median(deltas[:, 0]))
+    dy = float(np.median(deltas[:, 1]))
     x, y, w, h = track_bbox
     if abs(dx) > frame.shape[1] * .12 or abs(dy) > frame.shape[0] * .12:
         reset_tracker()
@@ -322,13 +334,28 @@ def recognition_worker(crop: np.ndarray) -> None:
         last_face_recognition = time.monotonic()
 
 
+def _face_change_requires_recognition(previous, current, frame_w, frame_h) -> bool:
+    if previous is None:
+        return True
+    px, py, pw, ph = previous
+    cx, cy, cw, ch = current
+    pcx, pcy = px + pw / 2, py + ph / 2
+    ccx, ccy = cx + cw / 2, cy + ch / 2
+    center_jump = ((ccx - pcx) ** 2 + (ccy - pcy) ** 2) ** 0.5 / max(1.0, (frame_w ** 2 + frame_h ** 2) ** 0.5)
+    size_ratio = max(cw / max(1, pw), pw / max(1, cw), ch / max(1, ph), ph / max(1, ch))
+    return center_jump > FACE_REACQUIRE_CENTER_JUMP or size_ratio > FACE_REACQUIRE_SIZE_RATIO
+
+
 def update_face_tracking(frame: np.ndarray) -> None:
-    global last_face_detection_frame, recognition_in_progress
+    global last_face_detection_frame, recognition_in_progress, last_face_recognition, last_published_bbox
     now = time.monotonic()
+    frame_h, frame_w = frame.shape[:2]
+
     tracked = update_klt_tracker(frame)
     if tracked is not None:
         publish_face(tracked, now)
 
+    # Haar reacquisition runs at ~1.5 FPS while KLT bridges the frames between it.
     if (frame_counter - last_face_detection_frame) < FACE_DETECT_EVERY_N_FRAMES:
         if tracked is None:
             publish_face(None, now)
@@ -341,24 +368,31 @@ def update_face_tracking(frame: np.ndarray) -> None:
             publish_face(None, now)
         return
 
-    # A fresh detector result is authoritative and reseeds optical flow.
+    changed_person_or_scale = _face_change_requires_recognition(last_published_bbox, detected, frame_w, frame_h)
+    if changed_person_or_scale:
+        with state_lock:
+            vision_state["name"] = "Unknown"
+            vision_state["face_distance"] = None
+        last_face_recognition = 0.0
+
+    # Fresh detector result is authoritative and reseeds optical flow.
     seed_tracker(frame, detected)
     publish_face(detected, now)
+    last_published_bbox = detected
 
-    # Recognition is cheap enough to retry occasionally when unknown, but never
-    # blocks the vision request and never runs on every frame.
-    was_tracking = tracked is not None
     with state_lock:
         current_name = vision_state["name"]
-    should_recognize = (
-        not was_tracking
-        or current_name == "Unknown"
-        or vision_state["face_distance"] is None
-    )
-    if should_recognize and not recognition_in_progress and (now - last_face_recognition) > RECOGNIZE_UNKNOWN_EVERY:
+        current_distance = vision_state["face_distance"]
+
+    should_recognize = changed_person_or_scale or current_name == "Unknown" or current_distance is None
+    if should_recognize and not recognition_in_progress and (now - last_face_recognition) >= RECOGNIZE_UNKNOWN_EVERY:
         x, y, w, h = detected
-        crop = frame[y:y + h, x:x + w].copy()
-        if crop.shape[0] >= 80 and crop.shape[1] >= 80:
+        # Expand the crop; recognition itself uses detector_backend=skip.
+        pad_x, pad_y = int(w * 0.22), int(h * 0.26)
+        x0, y0 = max(0, x - pad_x), max(0, y - pad_y)
+        x1, y1 = min(frame_w, x + w + pad_x), min(frame_h, y + h + pad_y)
+        crop = frame[y0:y1, x0:x1].copy()
+        if crop.shape[0] >= RECOGNITION_MIN_FACE and crop.shape[1] >= RECOGNITION_MIN_FACE:
             recognition_in_progress = True
             threading.Thread(target=recognition_worker, args=(crop,), daemon=True).start()
 
@@ -630,6 +664,68 @@ def chat_reset():
     with conversation_lock:
         conversations.pop(sid, None)
     return jsonify({"ok": True})
+
+
+def is_visual_question(text: str) -> bool:
+    t = text.lower().strip()
+    visual_phrases = (
+        "what am i holding", "what am i carrying", "what is in my hand",
+        "what's in my hand", "what am i wearing", "what do you see",
+        "what is happening", "what's happening", "what is going on",
+        "what's going on", "describe what you see", "look at this",
+        "can you see", "what is this", "what's this", "what object",
+        "where am i", "who is in front of you", "what is behind me",
+        "what's behind me", "is there a", "do you see a", "how many people",
+        "how many", "what color is", "what colour is", "read this",
+        "read the text", "can you read", "am i wearing", "is there anything"
+    )
+    return any(p in t for p in visual_phrases)
+
+
+def visual_question_prompt(question: str, previous: List[Dict[str, str]]) -> str:
+    history = "\n".join(
+        f"{m['role'].upper()}: {m['content']}" for m in previous[-VISUAL_CONTEXT_TURNS * 2:]
+    )
+    return (
+        "You are Veronica's visual perception module. Answer the user's question using ONLY the single current camera frame attached to this request. "
+        "Do not use memory of earlier frames, live tracking data, object detector labels, or assumptions to invent visual facts. "
+        "Conversation history may be used only to resolve a pronoun or reference such as 'it' or 'that'; every visual claim must be supported by the attached frame. "
+        "If the requested thing is not visible or cannot be determined confidently from this frame, say so plainly. "
+        "Do not identify a person by name from the image. Keep the answer natural and concise.\n\n"
+        + (f"Recent conversation for reference only:\n{history}\n\n" if history else "")
+        + f"USER'S CURRENT QUESTION: {question}"
+    )
+
+
+@app.post("/api/vision/question")
+def vision_question():
+    if not gemini_client:
+        return jsonify({"error": "GEMINI_API_KEY is not configured."}), 503
+    uploaded = request.files.get("frame")
+    if not uploaded:
+        return jsonify({"error": "frame is required"}), 400
+    question = (request.form.get("question") or "").strip()
+    if not question:
+        return jsonify({"error": "question is required"}), 400
+    data = uploaded.read()
+    if not data:
+        return jsonify({"error": "empty frame"}), 400
+    sid = get_session_id()
+    previous = get_conversation(sid)
+    try:
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[
+                types.Part.from_bytes(data=data, mime_type="image/jpeg"),
+                visual_question_prompt(question, previous),
+            ],
+        )
+        reply = (response.text or "I can't determine that from this frame.").strip()
+        append_turn(sid, question, reply)
+        return jsonify({"reply": reply, "provider": "gemini-vision", "frame_only": True})
+    except Exception as exc:
+        print(f"[Veronica] Visual question error: {type(exc).__name__}: {exc}")
+        return jsonify({"error": str(exc)}), 502
 
 
 @app.post("/api/scene")

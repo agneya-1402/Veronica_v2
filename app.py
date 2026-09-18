@@ -775,7 +775,27 @@ def current_identity():
         return name if name != "Unknown" else ""
 
 
-def build_system_prompt():
+def location_context_from_payload(value) -> str:
+    """Return coarse, opt-in browser location context or an empty string."""
+    if not isinstance(value, dict):
+        return ""
+    try:
+        latitude = float(value.get("latitude"))
+        longitude = float(value.get("longitude"))
+    except (TypeError, ValueError):
+        return ""
+    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        return ""
+
+    # Coordinates arrive pre-rounded by the browser. Keep the prompt coarse too.
+    return (
+        "The user explicitly shared an approximate current location for this request: "
+        f"latitude {latitude:.3f}, longitude {longitude:.3f}. "
+        "Use it only when relevant; do not imply a more precise location. "
+    )
+
+
+def build_system_prompt(location_context: str = ""):
     identity = current_identity()
     identity_context = (
         f"The camera currently identifies the person in front of you as {identity}. "
@@ -791,6 +811,7 @@ def build_system_prompt():
         "Never mention internal APIs, SDK objects, hidden reasoning, tokens, or implementation details. "
         "Never fabricate facts. If something is uncertain, say so plainly. "
         + identity_context
+        + (" " + location_context if location_context else "")
     )
 
 
@@ -1053,13 +1074,14 @@ def chat_stream():
 
     payload = request.get_json(silent=True) or {}
     message = (payload.get("message") or "").strip()
+    location_context = location_context_from_payload(payload.get("location"))
     sid = get_session_id()
 
     if not message:
         return jsonify({"error": "message is required"}), 400
 
     previous = get_conversation(sid)
-    messages = [{"role": "system", "content": build_system_prompt()}]
+    messages = [{"role": "system", "content": build_system_prompt(location_context)}]
     messages.extend(previous[-MAX_CONTEXT_MESSAGES:])
     messages.append({"role": "user", "content": message})
 
@@ -1106,6 +1128,7 @@ def chat_web():
 
     payload = request.get_json(silent=True) or {}
     message = (payload.get("message") or "").strip()
+    location_context = location_context_from_payload(payload.get("location"))
     sid = get_session_id()
 
     if not message:
@@ -1118,7 +1141,7 @@ def chat_web():
     )
 
     prompt = (
-        build_system_prompt()
+        build_system_prompt(location_context)
         + "\n\nWEB MODE IS ON FOR THIS REQUEST. "
         "You have the Google Search grounding tool available in this request. "
         "For this WEB request, you MUST use Google Search before answering. "
@@ -1148,7 +1171,7 @@ def chat_web():
         )
         if reply and not sources and any(marker in reply.lower() for marker in refusal_markers):
             retry_prompt = (
-                build_system_prompt()
+                build_system_prompt(location_context)
                 + "\n\nMANDATORY GOOGLE SEARCH TEST. Use the Google Search grounding tool NOW. "
                 "This is not a hypothetical question about whether you can browse. "
                 "Actually perform the search, use the returned web evidence, and answer "

@@ -155,8 +155,8 @@ button:disabled{opacity:.38;cursor:not-allowed}
 .response{
   position:absolute;left:50%;bottom:22px;transform:translateX(-50%);
   width:min(640px,72%);min-height:58px;max-height:142px;padding:14px 17px;
-  border:1px solid rgba(82,67,255,.34);border-radius:14px;background:rgba(3,3,9,.87);
-  backdrop-filter:blur(20px);color:#ddd9f7;font-size:12px;line-height:1.55;overflow:auto;
+  border:1px solid rgba(82,67,255,.30);border-radius:14px;background:rgba(3,3,9,.48);
+  backdrop-filter:blur(13px);color:#eeeaff;font-size:12px;line-height:1.55;overflow:auto;
   box-shadow:0 18px 55px rgba(0,0,0,.55);z-index:12
 }
 .response.empty{color:#65617d}.response.streaming{border-color:rgba(128,111,255,.75);box-shadow:0 0 35px rgba(82,67,255,.12)}
@@ -313,7 +313,7 @@ button:disabled{opacity:.38;cursor:not-allowed}
 </aside>
 
 <main class="center">
-  <div class="hero-copy"><strong>VERONICA</strong>LISTENS<br>UNDERSTANDS<br>THINKS<br>ACTS<br>WITH YOU<div class="quote">“Same chaos.<br>A calmer you.”</div></div>
+  <div class="hero-copy"><strong>VERONICA</strong>LISTENS<br>UNDERSTANDS<br>THINKS<br>ACTS<br>WITH YOU<div class="quote">“At your<br>Service”</div></div>
   <div class="gaze-state">VISION<br><b id="faceState">SEARCHING</b><br>LANGUAGE<br><b>READY</b><br>ACTION<br><b>ALWAYS ON</b></div>
 
   <div class="avatar-shell" id="avatarShell">
@@ -367,6 +367,7 @@ button:disabled{opacity:.38;cursor:not-allowed}
   <button class="chat-btn mic-btn" id="mic" title="Microphone">◉</button>
   <button class="chat-btn" id="talk" title="Continuous voice conversation">TALK</button>
   <input id="input" autocomplete="off" placeholder="Talk to Veronica…">
+  <button class="chat-btn" id="location" title="Share approximate location with Veronica">LOC</button>
   <button class="chat-btn web" id="web">WEB</button>
   <button class="chat-btn stop-btn" id="stopResponse" disabled>STOP</button>
   <button class="chat-btn" id="action">SEND</button>
@@ -401,7 +402,7 @@ const $=id=>document.getElementById(id);
 const video=$('camera'),canvas=$('canvas'),ctx=canvas.getContext('2d');
 
 const avatarShell=$('avatarShell'),eyeDirection=$('eyeDirection'),eyeExpression=$('eyeExpression'),mouthRest=$('mouthRest'),mouthExpression=$('mouthExpression');
-let stream=null,visionBusy=false,useWeb=false,talkMode=false;
+let stream=null,visionBusy=false,useWeb=false,talkMode=false,locationContext=null,activeRun=0;
 let activeController=null,activeKind=null;
 let targetGaze={x:0,y:0},currentGaze={x:0,y:0};
 let recognizedName='Unknown',greetedNames=new Set();
@@ -413,7 +414,7 @@ function escapeHtml(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;',
 function setResponse(text,empty=false){$('response').textContent=text||'';$('response').classList.toggle('empty',empty)}
 function showLoader(label){$('response').innerHTML=`<span class="loader">${escapeHtml(label)} <span class="dots"><i></i><i></i><i></i></span></span>`;$('response').classList.remove('empty')}
 function setStreaming(on){$('response').classList.toggle('streaming',on)}
-function setActionBusy(on){$('action').textContent=on?'WAIT':'SEND';$('action').disabled=on;const s=$('stopResponse');s.disabled=!on;s.classList.toggle('enabled',on)}
+function setActionBusy(on){$('action').textContent=on?'WAIT':'SEND';$('action').disabled=on;const s=$('stopResponse');s.disabled=false;s.classList.toggle('enabled',on||speechSynthesis?.speaking)}
 function renderSources(sources){
   document.querySelectorAll('.sources').forEach(x=>x.remove());
   if(!Array.isArray(sources)||!sources.length)return;
@@ -605,15 +606,16 @@ function speak(text,onDone){
   speechSynthesis.cancel();
   const u=new SpeechSynthesisUtterance(text);
   u.rate=.97;u.pitch=1.02;u.volume=1;u.voice=cachedFemaleVoice||pickFemaleVoice()||null;
-  u.onstart=()=>{avatarShell.classList.add('talking');if(talkMode)stopRecognition();startMouthAnimation(text);if(isJokeText(text))setTimeout(playJokeWink,420)};
+  u.onstart=()=>{avatarShell.classList.add('talking');$('stopResponse').classList.add('enabled');if(talkMode)stopRecognition();startMouthAnimation(text);if(isJokeText(text))setTimeout(playJokeWink,420)};
   u.onboundary=e=>{if(Number.isFinite(e.charIndex)){setMouthFrame(visemeAt(text,e.charIndex))}};
-  u.onend=()=>{avatarShell.classList.remove('talking');stopMouthAnimation();setMouthFrame(0);setTimeout(()=>mouthExpression.classList.remove('on'),180);onDone?.();if(talkMode&&!activeController)startRecognition(true)};
-  u.onerror=()=>{avatarShell.classList.remove('talking');stopMouthAnimation();setMouthFrame(0);setTimeout(()=>mouthExpression.classList.remove('on'),180);onDone?.();if(talkMode&&!activeController)startRecognition(true)};
+  u.onend=()=>{avatarShell.classList.remove('talking');stopMouthAnimation();setMouthFrame(0);setTimeout(()=>mouthExpression.classList.remove('on'),180);$('stopResponse').classList.toggle('enabled',!!activeController);onDone?.();if(talkMode&&!activeController)startRecognition(true)};
+  u.onerror=()=>{avatarShell.classList.remove('talking');stopMouthAnimation();setMouthFrame(0);setTimeout(()=>mouthExpression.classList.remove('on'),180);$('stopResponse').classList.toggle('enabled',!!activeController);onDone?.();if(talkMode&&!activeController)startRecognition(true)};
   speechSynthesis.speak(u);
 }
 function stopEverything(){
+  activeRun++;
   if(activeController){activeController.abort();activeController=null}
-  speechSynthesis?.cancel();stopMouthAnimation();clearTimeout(eyeOverrideTimer);eyeOverrideUntil=0;eyeExpression.classList.remove('on');restoreEyeDirection();avatarShell.classList.remove('talking');setMouthFrame(0);
+  talkMode=false;$('talk').classList.remove('active');stopRecognition();speechSynthesis?.cancel();stopMouthAnimation();clearTimeout(eyeOverrideTimer);eyeOverrideUntil=0;eyeExpression.classList.remove('on');restoreEyeDirection();avatarShell.classList.remove('talking');setMouthFrame(0);
   setStreaming(false);setActionBusy(false);activeKind=null
 }
 function focusChat(){$('input').focus()}
@@ -663,9 +665,27 @@ function isVisualQuestion(text){
   const p=['what am i holding','what is in my hand',"what's in my hand",'what am i wearing','what do i look like','what do you see','what is happening',"what's happening",'what is going on',"what's going on",'describe what you see','look at this','can you see','what is this',"what's this",'what object','who is in front of you','what is behind me',"what's behind me",'do you see a','how many people','what color is','what colour is','read this','read the text','can you read','what is on my desk',"what's on my desk",'what is around me',"what's around me"];
   return p.some(x=>t.includes(x))||(/\b(am i|do i have|is there|are there)\b/.test(t)&&/(wear|holding|behind|visible|desk|hand)/.test(t))
 }
+function chatBody(message){return JSON.stringify({message,location:locationContext})}
+function requestLocation(){
+  if(!navigator.geolocation){setResponse('Location is not supported by this browser.');return}
+  const button=$('location');button.disabled=true;button.textContent='LOC…';
+  navigator.geolocation.getCurrentPosition(position=>{
+    locationContext={
+      latitude:Number(position.coords.latitude.toFixed(3)),
+      longitude:Number(position.coords.longitude.toFixed(3)),
+      accuracy_m:Math.round(position.coords.accuracy),
+    };
+    button.disabled=false;button.textContent='LOC ON';button.classList.add('active');
+    setResponse('Approximate location is available for your next requests.');
+  },()=>{
+    button.disabled=false;button.textContent='LOC';button.classList.remove('active');
+    setResponse('Location was not shared.');
+  },{enableHighAccuracy:false,maximumAge:300000,timeout:10000});
+}
 async function sendMessage(msg){
   msg=(msg||'').trim();if(!msg)return;
   if(activeController){stopEverything();return}
+  const run=++activeRun;
   $('input').value='';
   const visual=isVisualQuestion(msg);
   showLoader(visual?(useWeb?'Looking at the current frame + searching Google':'Looking at the current frame'):(useWeb?'Searching Google and thinking':'Thinking'));
@@ -673,37 +693,41 @@ async function sendMessage(msg){
   try{
     if(visual){
       const blob=await captureFreshFrame();if(!blob)throw new Error('Camera frame is not ready yet.');
-      const fd=new FormData();fd.append('frame',blob,'current-frame.jpg');fd.append('question',msg);fd.append('web',useWeb?'1':'0');
+      const fd=new FormData();fd.append('frame',blob,'current-frame.jpg');fd.append('question',msg);fd.append('web',useWeb?'1':'0');if(locationContext)fd.append('location',JSON.stringify(locationContext));
       const r=await fetch('/api/vision/question',{method:'POST',headers:headers(),body:fd,signal:activeController.signal});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Visual analysis failed');
+      if(run!==activeRun)return;
       setResponse(d.reply||'I could not determine that from the current frame.');renderSources(d.sources);speak(d.reply||'')
     }else if(useWeb){
-      const r=await fetch('/api/chat/web',{method:'POST',headers:{'Content-Type':'application/json',...headers()},body:JSON.stringify({message:msg}),signal:activeController.signal});
+      const r=await fetch('/api/chat/web',{method:'POST',headers:{'Content-Type':'application/json',...headers()},body:chatBody(msg),signal:activeController.signal});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'Web search failed');
+      if(run!==activeRun)return;
       setResponse(d.reply||'');renderSources(d.sources);speak(d.reply||'')
     }else{
-      const r=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json',...headers()},body:JSON.stringify({message:msg}),signal:activeController.signal});
+      const r=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json',...headers()},body:chatBody(msg),signal:activeController.signal});
       if(!r.ok){const d=await r.json();throw new Error(d.error||'Request failed')}
       const reader=r.body.getReader(),decoder=new TextDecoder();let buffer='',reply='';
       setResponse('');
       while(true){
         const {value,done}=await reader.read();if(done)break;
+        if(run!==activeRun)break;
         buffer+=decoder.decode(value,{stream:true});
         const chunks=buffer.split('\n\n');buffer=chunks.pop()||'';
         for(const chunk of chunks){
           const line=chunk.split('\n').find(x=>x.startsWith('data: '));if(!line)continue;
           const d=JSON.parse(line.slice(6));
-          if(d.type==='delta'){reply+=d.text;setResponse(reply)}
+          if(d.type==='delta'&&run===activeRun){reply+=d.text;setResponse(reply)}
           if(d.type==='error')throw new Error(d.error)
         }
       }
-      if(reply){setResponse(reply);speak(reply)}
+      if(reply&&run===activeRun){setResponse(reply);speak(reply)}
     }
-  }catch(e){if(e.name==='AbortError')setResponse('Response stopped.');else setResponse(e.message||'Something went wrong.')}
-  finally{activeController=null;activeKind=null;setActionBusy(false);setStreaming(false);if(talkMode&&!speechSynthesis.speaking)startRecognition(true)}
+  }catch(e){if(run!==activeRun)return;if(e.name==='AbortError')setResponse('Response stopped.');else setResponse(e.message||'Something went wrong.')}
+  finally{if(run!==activeRun)return;activeController=null;activeKind=null;setActionBusy(false);setStreaming(false);if(talkMode&&!speechSynthesis.speaking)startRecognition(true)}
 }
 $('action').onclick=()=>{if(activeController)return sendMessage('');sendMessage($('input').value)};
-$('stopResponse').onclick=()=>{if(activeController||speechSynthesis?.speaking){stopEverything();setResponse('Response stopped.')}};
+$('stopResponse').onclick=()=>{stopEverything();setResponse('Response stopped.',true)};
+$('location').onclick=requestLocation;
 $('input').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage($('input').value)}};
 $('web').onclick=()=>{useWeb=!useWeb;$('web').classList.toggle('active',useWeb);$('web').textContent=useWeb?'WEB ON':'WEB'};
 $('webQuick').onclick=()=>{$('input').focus();useWeb=true;$('web').classList.add('active');$('web').textContent='WEB ON';setResponse('WEB mode enabled — ask a current question.')};
